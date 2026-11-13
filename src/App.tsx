@@ -46,9 +46,12 @@ import {
 } from './services/geminiClient';
 import { SAMPLE_SESSION } from './utils/sampleData';
 import { clearGeminiApiKey, saveGeminiApiKey } from './utils/apiKeyStorage';
+const BatchTextPanel = React.lazy(() => import('./components/BatchTextPanel'));
 
 export default function App() {
   const [initialized, setInitialized] = useState(false);
+  const [inputMode, setInputMode] = useState<'text' | 'audio'>('text');
+  const [batchBusy, setBatchBusy] = useState(false);
   const [storageError, setStorageError] = useState('');
   // App views: 'upload' | 'progress' | 'output'
   const [currentView, setCurrentView] = useState<'upload' | 'progress' | 'output'>('upload');
@@ -481,6 +484,16 @@ export default function App() {
       />
 
       <main className="flex-1 flex flex-col items-center justify-center p-3 sm:p-6">
+        <nav aria-label="نوع ورودی" className="w-full max-w-5xl flex flex-wrap gap-2 mb-4">
+          <button className={`batch-button ${inputMode === 'text' ? 'bg-slate-900! text-white!' : ''}`}
+            disabled={batchBusy || Boolean(abortControllerRef.current)} onClick={() => { setInputMode('text'); setCurrentView('upload'); }}>
+            متن جلسات و بسته NotebookLM
+          </button>
+          <button className={`batch-button ${inputMode === 'audio' ? 'bg-slate-900! text-white!' : ''}`}
+            disabled={batchBusy || Boolean(abortControllerRef.current)} onClick={() => { setInputMode('audio'); setCurrentView('upload'); }}>
+            پردازش فایل صوتی
+          </button>
+        </nav>
         {initialized && currentView === 'upload' && (
           <ApiKeyPanel
             apiKey={settings.userGeminiApiKey || ''}
@@ -495,7 +508,10 @@ export default function App() {
           />
         )}
         {initialized && currentView === 'upload' && <ConnectionDiagnostic settings={settings} />}
-        {initialized && currentView === 'upload' && (
+        {initialized && currentView === 'upload' && inputMode === 'text' && (
+          <React.Suspense fallback={<p>در حال بازکردن ابزار متن جلسات…</p>}><BatchTextPanel onBusyChange={setBatchBusy} /></React.Suspense>
+        )}
+        {initialized && currentView === 'upload' && inputMode === 'audio' && (
           <UploadZone
             files={files}
             onFilesChanged={handleFilesChanged}

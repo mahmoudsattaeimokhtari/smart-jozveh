@@ -10,6 +10,7 @@
     "start": "vite",
     "clean": "rm -rf dist",
     "lint": "tsc --noEmit",
+    "test": "node --experimental-strip-types --test tests/batch.test.mjs",
     "build:electron": "vite build && electron-builder --win --config electron/electron-builder.json",
     "cap:sync": "vite build && npx cap sync android"
   },
@@ -19,12 +20,15 @@
     "@types/canvas-confetti": "^1.9.0",
     "@types/jszip": "^3.4.0",
     "@vitejs/plugin-react": "^6.1.1",
+    "bidi-js": "^1.1.0",
     "canvas-confetti": "^1.9.4",
     "docx": "^9.15.3",
     "idb-keyval": "^6.3.0",
+    "jspdf": "^4.2.1",
     "jszip": "^3.10.2",
     "lucide-react": "^0.546.0",
     "motion": "^12.23.24",
+    "pdf-lib": "^1.17.1",
     "react": "^19.0.1",
     "react-dom": "^19.0.1",
     "vite": "^8.3.0"
@@ -36,7 +40,9 @@
     "@types/react": "^19.3.0",
     "@types/react-dom": "^19.3.0",
     "autoprefixer": "^10.4.21",
+    "fake-indexeddb": "^6.2.8",
     "tailwindcss": "^4.3.3",
-    "typescript": "^7.0.2"
+    "typescript": "^7.0.2",
+    "unpdf": "^2.1.0"
   }
 }

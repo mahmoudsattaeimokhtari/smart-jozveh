@@ -7,3 +7,5 @@ Source and build/replacement instructions: https://github.com/shijinyu/lamejs
 The encoder is imported by src/utils/mp3.worker.ts. To replace or modify it, install a compatible encoder package, update that import, and run npm run build. The output worker is served as a separate JavaScript asset.
 
 The upstream license is included at public/licenses/lamejs-LICENSE.txt.
+
+PDF output embeds Vazirmatn Regular and Bold, from https://github.com/rastikerdar/vazirmatn (v33.003), under the SIL Open Font License. The license is included at public/fonts/OFL.txt.
