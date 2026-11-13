@@ -20,6 +20,7 @@ import { InstallModal } from './components/InstallModal';
 import { ConnectionDiagnostic } from './components/ConnectionDiagnostic';
 import { ApiKeyPanel } from './components/ApiKeyPanel';
 import { DEFAULT_CHUNK_MINUTES, sliceAudioFile } from './utils/audioChunker';
+import { prepareLongAudio } from './utils/longAudio';
 import { groupFilesBySessionAndPart } from './utils/fileOrganizer';
 import {
   loadSessions,
@@ -205,11 +206,7 @@ export default function App() {
                 setCurrentPartName(fileItem.partName);
                 setCurrentSessionTitle(fileItem.sessionName);
 
-                const chunks = await sliceAudioFile(
-                  fileItem.file,
-                  fileItem.id,
-                  settings.maxChunkMinutes || DEFAULT_CHUNK_MINUTES
-                );
+                const chunks = await prepareLongAudio(fileItem.file, fileItem.id, signal, setRequestStatus);
                 chunks.forEach((c) => sessionChunks.push({ chunk: c, file: fileItem }));
                 totalAllChunks += chunks.length;
               } catch (err: any) {
@@ -242,7 +239,7 @@ export default function App() {
         const sessionTitle = sess.sessionName;
         setCurrentSessionTitle(sessionTitle);
 
-        const fingerprint = JSON.stringify({ files: chunks.map(c => [c.file.id, c.file.name, c.file.sessionName, c.file.partName]), minutes: settings.maxChunkMinutes, customPrompt, courseTitle, instructorName });
+        const fingerprint = JSON.stringify({ mode: 'long30-mp3-24-sse-v1', files: chunks.map(c => [c.file.id, c.file.name, c.file.sessionName, c.file.partName]), customPrompt, courseTitle, instructorName });
         const bytes = new TextEncoder().encode(fingerprint);
         const digest = await crypto.subtle.digest('SHA-256', bytes);
         const jobId = Array.from(new Uint8Array(digest)).map(v => v.toString(16).padStart(2, '0')).join('');
@@ -286,6 +283,7 @@ export default function App() {
             try {
               const data = await transcribeChunk(ai, {
                 audioBlob: chunk.audioBlob,
+                longAudio: true,
                 progressKey: `${jobId}:${chunk.chunkId}`,
                 onStatus: setRequestStatus,
                 sessionTitle, partTitle: file.partName, fileName: file.name,
@@ -338,7 +336,7 @@ export default function App() {
 
         // Step 4: Synthesizing Session into Classic Study Notes
         setProcessingStep('generating_notes');
-        setRequestStatus('متن قطعات ذخیره شده است؛ در حال دریافت جزوه از Gemini با سقف انتظار ۱۸۰ ثانیه.');
+        setRequestStatus('متن صوت ذخیره شده است؛ در حال دریافت جریان جزوه از Gemini.');
         setProgressPercent(84);
 
         const classicNote = await synthesizeSession(ai, {

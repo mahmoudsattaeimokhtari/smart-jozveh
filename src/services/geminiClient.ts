@@ -1,13 +1,15 @@
 import type { AppSettings, TranscriptParagraph, ClassicNote } from '../types';
 import { MAX_INLINE_AUDIO_BYTES, sliceAudioFile } from '../utils/audioChunker';
 import { get, set } from 'idb-keyval';
+import { LONG_AUDIO_MAX_BYTES } from '../utils/longAudio';
+import { readGeminiStream } from './geminiStream';
 
 export const GEMINI_API_BASE_URL = 'https://generativelanguage.googleapis.com';
 export const GEMINI_API_VERSION = 'v1beta';
 export const GEMINI_MODEL = 'gemini-3.5-flash-lite';
 export const GEMINI_GENERATE_ENDPOINT = `${GEMINI_API_BASE_URL}/${GEMINI_API_VERSION}/models/${GEMINI_MODEL}:generateContent`;
-export const GEMINI_AUDIO_TIMEOUT_MS = 120_000;
-export const GEMINI_TEXT_TIMEOUT_MS = 180_000;
+export const GEMINI_AUDIO_TIMEOUT_MS = 1_200_000;
+export const GEMINI_TEXT_TIMEOUT_MS = 600_000;
 export const GEMINI_DIAGNOSTIC_TIMEOUT_MS = 30_000;
 
 const SchemaType = {
@@ -92,8 +94,8 @@ async function withGeminiTimeout<T>(
 
 async function blobToBase64(blob: Blob, signal: AbortSignal): Promise<string> {
   signal.throwIfAborted();
-  if (blob.size > MAX_INLINE_AUDIO_BYTES) {
-    throw new Error(`حجم قطعه صوتی ${Math.ceil(blob.size / 1024 / 1024)} مگابایت است و از سقف ۳ مگابایت ارسال مستقیم بیشتر است.`);
+  if (blob.size > LONG_AUDIO_MAX_BYTES) {
+    throw new Error('حجم صوت فشرده از سقف امن ارسال مستقیم بیشتر است.');
   }
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
@@ -117,33 +119,19 @@ async function generateContentText(
   body: Record<string, unknown>,
   parentSignal: AbortSignal,
   timeoutMs = GEMINI_TEXT_TIMEOUT_MS,
+  onProgress?: (length: number) => void,
 ): Promise<string> {
-  const { response, raw } = await withGeminiTimeout(parentSignal, async requestSignal => {
-    const response = await fetch(GEMINI_GENERATE_ENDPOINT, {
-      method: 'POST',
-      cache: 'no-store',
+  const serialized = JSON.stringify(body);
+  if (new Blob([serialized]).size > 19 * 1024 * 1024) throw new Error('حجم کل درخواست از سقف امن ۱۹ مگابایت بیشتر است.');
+  return withGeminiTimeout(parentSignal, async requestSignal => {
+    const response = await withGeminiTimeout(requestSignal, headerSignal => fetch(GEMINI_GENERATE_ENDPOINT.replace(':generateContent', ':streamGenerateContent?alt=sse'), {
+      method: 'POST', cache: 'no-store',
       headers: { 'Content-Type': 'application/json', 'x-goog-api-key': client.apiKey },
-      body: JSON.stringify(body),
-      signal: requestSignal,
-    });
-    return { response, raw: await response.text() };
+      body: serialized, signal: headerSignal,
+    }), 180_000);
+    if (!response.ok) throw new Error(`HTTP ${response.status}: ${redactSecrets(await response.text(), client.apiKey)}`);
+    return readGeminiStream(response, requestSignal, onProgress);
   }, timeoutMs);
-  if (!response.ok) {
-    throw new Error(`HTTP ${response.status}: ${redactSecrets(raw, client.apiKey)}`);
-  }
-  let payload: any;
-  try { payload = JSON.parse(raw); }
-  catch { throw new Error('پاسخ Gemini JSON معتبر نبود.'); }
-  const candidate = payload.candidates?.[0];
-  if (candidate?.finishReason && candidate.finishReason !== 'STOP') {
-    throw new Error(`پاسخ Gemini کامل نشد: ${candidate.finishReason}`);
-  }
-  const text = (candidate?.content?.parts || [])
-    .filter((part: any) => !part.thought)
-    .map((part: any) => typeof part?.text === 'string' ? part.text : '')
-    .join('');
-  if (!text) throw new Error('Gemini پاسخ متنی قابل استفاده برنگرداند.');
-  return text;
 }
 
 export async function runBrowserConnectionDiagnostic(
@@ -204,6 +192,7 @@ interface TranscribeInput {
   chunkIndex: number; totalChunks: number; timeOffsetSeconds: number; customPrompt: string;
   progressKey?: string;
   onStatus?: (message: string) => void;
+  longAudio?: boolean;
 }
 async function transcribeSingle(ai: BrowserGeminiClient, input: TranscribeInput, signal: AbortSignal) {
   const { audioBlob, sessionTitle, partTitle, fileName, chunkIndex, totalChunks, timeOffsetSeconds, customPrompt } = input;
@@ -227,7 +216,7 @@ async function transcribeSingle(ai: BrowserGeminiClient, input: TranscribeInput,
       ] }],
       systemInstruction: { parts: [{ text: systemInstruction }] },
       generationConfig: {
-        maxOutputTokens: 8192,
+        maxOutputTokens: input.longAudio ? 65536 : 8192,
         responseMimeType: 'application/json',
         responseSchema: {
           type: SchemaType.OBJECT,
@@ -269,7 +258,7 @@ async function transcribeSingle(ai: BrowserGeminiClient, input: TranscribeInput,
           required: ['paragraphs', 'questions'],
         },
       },
-    }, signal, GEMINI_AUDIO_TIMEOUT_MS);
+    }, signal, GEMINI_AUDIO_TIMEOUT_MS, length => input.onStatus?.(`دریافت متن از Gemini: ${length.toLocaleString('fa-IR')} نویسه؛ ارتباط در حال دریافت داده است.`));
 
     const parsedData = JSON.parse(responseText || '{}');
     if (!Array.isArray(parsedData.paragraphs) || !parsedData.paragraphs.length || !Array.isArray(parsedData.questions)) throw new Error('پاسخ مدل فاقد متن معتبر است.');
@@ -308,6 +297,14 @@ interface SmallPartRecovery {
 }
 
 export async function transcribeChunk(ai: BrowserGeminiClient, input: TranscribeInput, signal: AbortSignal): Promise<ChunkResult> {
+  if (input.longAudio) {
+    const resultKey = input.progressKey ? `smart_jozveh_long_result_v1:${input.progressKey}` : undefined;
+    const saved = resultKey ? await get<ChunkResult>(resultKey) : undefined;
+    if (saved) return saved;
+    const result = await transcribeSingle(ai, input, signal);
+    if (resultKey) await set(resultKey, result);
+    return result;
+  }
   const key = input.progressKey ? `smart_jozveh_small_parts_v1:${input.progressKey}` : undefined;
   let recovery = key ? await get<SmallPartRecovery>(key) : undefined;
   if (!recovery) {
