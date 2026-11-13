@@ -51,7 +51,7 @@ export const ProgressView: React.FC<ProgressViewProps> = ({
     {
       id: 'slicing',
       title: 'تقطیع و آماده‌سازی صوت روی دستگاه',
-      desc: 'برش قطعات زیر ۳۰ دقیقه بدون آپلود اولیه',
+      desc: 'برش قطعات حداکثر ۸ دقیقه و زیر ۸ مگابایت برای ارسال مستقیم',
       icon: FileAudio,
     },
     {

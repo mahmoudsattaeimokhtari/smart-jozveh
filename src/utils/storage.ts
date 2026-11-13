@@ -1,6 +1,7 @@
 import { get, set, del, update } from 'idb-keyval';
 import { ProcessedSession, AppSettings, DEFAULT_PROMPT, AudioFileItem } from '../types';
 import { loadGeminiApiKey, saveGeminiApiKey } from './apiKeyStorage';
+import { DEFAULT_CHUNK_MINUTES } from './audioChunker';
 
 const SESSIONS_KEY = 'smart_jozveh_sessions_v1';
 const SETTINGS_KEY = 'smart_jozveh_settings_v1';
@@ -14,7 +15,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
   persianBodyFont: 'B Nazanin',
   persianHeadingFont: 'B Zar',
   englishFont: 'Times New Roman',
-  maxChunkMinutes: 30,
+  maxChunkMinutes: DEFAULT_CHUNK_MINUTES,
   autoSaveToDevice: true,
 };
 
@@ -37,8 +38,17 @@ export async function loadSettings(): Promise<AppSettings> {
     if (legacyKey && !loadGeminiApiKey()) {
       try { saveGeminiApiKey(legacyKey); } catch { /* Ignore invalid legacy values. */ }
     }
-    const { userGeminiApiKey: _legacyKey, serverUrl: _legacyServerUrl, ...safeSettings } = settings || {};
-    return { ...DEFAULT_SETTINGS, ...safeSettings, userGeminiApiKey: loadGeminiApiKey() };
+    const storedSettings: AppSettings = settings || DEFAULT_SETTINGS;
+    const { userGeminiApiKey: _legacyKey, serverUrl: _legacyServerUrl, ...safeSettings } = storedSettings;
+    const savedMinutes = Number(safeSettings.maxChunkMinutes);
+    return {
+      ...DEFAULT_SETTINGS,
+      ...safeSettings,
+      maxChunkMinutes: Number.isFinite(savedMinutes)
+        ? Math.min(DEFAULT_CHUNK_MINUTES, Math.max(1, savedMinutes))
+        : DEFAULT_CHUNK_MINUTES,
+      userGeminiApiKey: loadGeminiApiKey(),
+    };
   } catch (err) {
     return { ...DEFAULT_SETTINGS, userGeminiApiKey: loadGeminiApiKey() };
   }
@@ -46,7 +56,10 @@ export async function loadSettings(): Promise<AppSettings> {
 
 export async function saveSettings(settings: AppSettings): Promise<void> {
   const { userGeminiApiKey: _apiKey, serverUrl: _serverUrl, ...safeSettings } = settings;
-  await set(SETTINGS_KEY, safeSettings);
+  await set(SETTINGS_KEY, {
+    ...safeSettings,
+    maxChunkMinutes: Math.min(DEFAULT_CHUNK_MINUTES, Math.max(1, Number(safeSettings.maxChunkMinutes) || DEFAULT_CHUNK_MINUTES)),
+  });
 }
 
 export async function loadCustomPrompt(): Promise<string> {

@@ -1,5 +1,8 @@
 import { AudioChunk } from '../types';
 
+export const DEFAULT_CHUNK_MINUTES = 8;
+export const MAX_INLINE_AUDIO_BYTES = 8 * 1024 * 1024;
+
 export async function getAudioDuration(file: File): Promise<number> {
   return new Promise(resolve => {
     const audio = document.createElement('audio');
@@ -34,7 +37,7 @@ function wavChunk(buffer: AudioBuffer, start: number, end: number): Blob {
   return new Blob([bytes], { type: 'audio/wav' });
 }
 
-export async function sliceAudioFile(file: File, parentFileId: string, maxMinutes = 30): Promise<AudioChunk[]> {
+export async function sliceAudioFile(file: File, parentFileId: string, maxMinutes = DEFAULT_CHUNK_MINUTES): Promise<AudioChunk[]> {
   if (!Number.isFinite(maxMinutes) || maxMinutes <= 0) throw new Error('مدت قطعه باید مثبت باشد.');
   const duration = await getAudioDuration(file);
   const make = (blob: Blob, i: number, total: number, offset: number, seconds: number): AudioChunk => ({
@@ -42,7 +45,7 @@ export async function sliceAudioFile(file: File, parentFileId: string, maxMinute
     timeOffsetSeconds: offset, durationSeconds: seconds, audioBlob: blob, status: 'pending', retries: 0,
   });
   const mimeTypes: Record<string, string> = { mp3: 'audio/mpeg', m4a: 'audio/mp4', aac: 'audio/aac', wav: 'audio/wav', ogg: 'audio/ogg', opus: 'audio/ogg', flac: 'audio/flac' };
-  if (duration > 0 && duration <= maxMinutes * 60) {
+  if (duration > 0 && duration <= maxMinutes * 60 && file.size <= MAX_INLINE_AUDIO_BYTES) {
     const type = file.type || mimeTypes[file.name.split('.').pop()?.toLowerCase() || ''];
     if (!type) throw new Error('نوع فایل صوتی قابل تشخیص نیست.');
     return [make(file.slice(0, file.size, type), 0, 1, 0, duration)];
@@ -51,7 +54,10 @@ export async function sliceAudioFile(file: File, parentFileId: string, maxMinute
   const context = new AudioContext({ sampleRate: 16000 });
   try {
     const buffer = await context.decodeAudioData(await file.arrayBuffer());
-    const framesPerChunk = Math.max(1, Math.floor(maxMinutes * 60 * buffer.sampleRate));
+    // Inline Base64 adds about 33% overhead. Keep the raw mono WAV at or below 8 MiB.
+    const framesByTime = Math.max(1, Math.floor(maxMinutes * 60 * buffer.sampleRate));
+    const framesBySize = Math.max(1, Math.floor((MAX_INLINE_AUDIO_BYTES - 44) / 2));
+    const framesPerChunk = Math.min(framesByTime, framesBySize);
     const total = Math.ceil(buffer.length / framesPerChunk);
     return Array.from({ length: total }, (_, i) => {
       const start = i * framesPerChunk;

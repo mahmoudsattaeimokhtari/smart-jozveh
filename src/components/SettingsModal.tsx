@@ -124,20 +124,20 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
           {/* Max chunk duration */}
           <div>
             <label className="block font-semibold text-slate-700 mb-1">
-              سقف زمان قطعه‌بندی محلی صوت (دقیقه، پیش‌فرض ۳۰):
+              سقف زمان قطعه‌بندی محلی صوت (دقیقه، پیش‌فرض ۸):
             </label>
             <input
               type="number"
-              min="5"
-              max="60"
+              min="1"
+              max="8"
               value={formData.maxChunkMinutes}
               onChange={(e) =>
-                setFormData({ ...formData, maxChunkMinutes: parseInt(e.target.value, 10) || 30 })
+                setFormData({ ...formData, maxChunkMinutes: Math.min(8, parseInt(e.target.value, 10) || 8) })
               }
               className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-slate-800 focus:outline-none focus:ring-1 focus:ring-slate-400"
             />
             <p className="text-[11px] text-slate-400 mt-1">
-              فایل‌های طولانی‌تر پیش از ارسال روی مرورگر شما به این اندازه بریده می‌شوند.
+              قطعه‌ها حداکثر ۸ دقیقه‌اند و اگر WAV بزرگ شود، برای ماندن زیر ۸ مگابایت کوتاه‌تر می‌شوند.
             </p>
           </div>
 

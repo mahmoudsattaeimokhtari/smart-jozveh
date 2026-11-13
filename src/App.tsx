@@ -19,7 +19,7 @@ import { HelpModal } from './components/HelpModal';
 import { InstallModal } from './components/InstallModal';
 import { ConnectionDiagnostic } from './components/ConnectionDiagnostic';
 import { ApiKeyPanel } from './components/ApiKeyPanel';
-import { sliceAudioFile } from './utils/audioChunker';
+import { DEFAULT_CHUNK_MINUTES, sliceAudioFile } from './utils/audioChunker';
 import { groupFilesBySessionAndPart } from './utils/fileOrganizer';
 import {
   loadSessions,
@@ -159,7 +159,7 @@ export default function App() {
     }
   };
 
-  // Start Full Automated Processing Pipeline (preserving 30-min chunks)
+  // Start Full Automated Processing Pipeline with inline-safe audio chunks.
   const handleStartProcessing = async () => {
     if (!initialized || files.length === 0 || abortControllerRef.current) return;
 
@@ -184,7 +184,7 @@ export default function App() {
       }
       const previousQueue = await loadQueueState();
       const existingSessions = await loadSessions();
-      // Step 1: Slicing Audio on Device (30-minute chunks)
+      // Step 1: Slice audio locally; time and byte limits keep inline requests safe.
       setProcessingStep('slicing');
       setProgressPercent(5);
 
@@ -207,7 +207,7 @@ export default function App() {
                 const chunks = await sliceAudioFile(
                   fileItem.file,
                   fileItem.id,
-                  settings.maxChunkMinutes || 30
+                  settings.maxChunkMinutes || DEFAULT_CHUNK_MINUTES
                 );
                 chunks.forEach((c) => sessionChunks.push({ chunk: c, file: fileItem }));
                 totalAllChunks += chunks.length;

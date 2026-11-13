@@ -1,10 +1,17 @@
-import { GoogleGenAI, Type } from '@google/genai';
 import type { AppSettings, TranscriptParagraph, ClassicNote } from '../types';
+import { MAX_INLINE_AUDIO_BYTES } from '../utils/audioChunker';
 
 export const GEMINI_API_BASE_URL = 'https://generativelanguage.googleapis.com';
 export const GEMINI_API_VERSION = 'v1beta';
 export const GEMINI_MODEL = 'gemini-3.5-flash-lite';
 export const GEMINI_GENERATE_ENDPOINT = `${GEMINI_API_BASE_URL}/${GEMINI_API_VERSION}/models/${GEMINI_MODEL}:generateContent`;
+export const GEMINI_REQUEST_TIMEOUT_MS = 180_000;
+
+const SchemaType = {
+  OBJECT: 'OBJECT', ARRAY: 'ARRAY', STRING: 'STRING', NUMBER: 'NUMBER', BOOLEAN: 'BOOLEAN',
+} as const;
+
+interface BrowserGeminiClient { apiKey: string }
 
 export interface ConnectionDiagnosticResult {
   route: 'browser-direct' | 'server-auto-proxy';
@@ -43,10 +50,82 @@ async function resolveGeminiApiKey(settings: AppSettings, signal?: AbortSignal):
 // Credentials stay in memory; all Google requests originate in this browser.
 export async function createGeminiClient(settings: AppSettings, signal?: AbortSignal) {
   const apiKey = await resolveGeminiApiKey(settings, signal);
-  return new GoogleGenAI({
-    apiKey,
-    httpOptions: { apiVersion: GEMINI_API_VERSION, timeout: 600000 },
+  return { apiKey } satisfies BrowserGeminiClient;
+}
+
+async function withGeminiTimeout<T>(
+  parentSignal: AbortSignal | undefined,
+  request: (signal: AbortSignal) => Promise<T>,
+): Promise<T> {
+  parentSignal?.throwIfAborted();
+  const controller = new AbortController();
+  let timedOut = false;
+  const forwardAbort = () => controller.abort(parentSignal?.reason);
+  parentSignal?.addEventListener('abort', forwardAbort, { once: true });
+  const timer = window.setTimeout(() => {
+    timedOut = true;
+    controller.abort(new DOMException('Gemini request timed out', 'TimeoutError'));
+  }, GEMINI_REQUEST_TIMEOUT_MS);
+  try {
+    return await request(controller.signal);
+  } catch (error) {
+    if (timedOut) throw new Error('مهلت ۱۸۰ ثانیه‌ای درخواست Gemini تمام شد؛ اتصال را بررسی و دوباره تلاش کنید.');
+    throw error;
+  } finally {
+    window.clearTimeout(timer);
+    parentSignal?.removeEventListener('abort', forwardAbort);
+  }
+}
+
+async function blobToBase64(blob: Blob, signal: AbortSignal): Promise<string> {
+  signal.throwIfAborted();
+  if (blob.size > MAX_INLINE_AUDIO_BYTES) {
+    throw new Error(`حجم قطعه صوتی ${Math.ceil(blob.size / 1024 / 1024)} مگابایت است و از سقف ۸ مگابایت ارسال مستقیم بیشتر است.`);
+  }
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    const abort = () => reader.abort();
+    signal.addEventListener('abort', abort, { once: true });
+    reader.onerror = () => { signal.removeEventListener('abort', abort); reject(reader.error || new Error('خواندن قطعه صوتی ناموفق بود.')); };
+    reader.onabort = () => { signal.removeEventListener('abort', abort); reject(signal.reason || new DOMException('Aborted', 'AbortError')); };
+    reader.onload = () => {
+      signal.removeEventListener('abort', abort);
+      const result = String(reader.result || '');
+      const comma = result.indexOf(',');
+      if (comma < 0) reject(new Error('تبدیل قطعه صوتی به Base64 ناموفق بود.'));
+      else resolve(result.slice(comma + 1));
+    };
+    reader.readAsDataURL(blob);
   });
+}
+
+async function generateContentText(
+  client: BrowserGeminiClient,
+  body: Record<string, unknown>,
+  parentSignal: AbortSignal,
+): Promise<string> {
+  const { response, raw } = await withGeminiTimeout(parentSignal, async requestSignal => {
+    const response = await fetch(GEMINI_GENERATE_ENDPOINT, {
+      method: 'POST',
+      cache: 'no-store',
+      headers: { 'Content-Type': 'application/json', 'x-goog-api-key': client.apiKey },
+      body: JSON.stringify(body),
+      signal: requestSignal,
+    });
+    return { response, raw: await response.text() };
+  });
+  if (!response.ok) {
+    throw new Error(`HTTP ${response.status}: ${redactSecrets(raw, client.apiKey)}`);
+  }
+  let payload: any;
+  try { payload = JSON.parse(raw); }
+  catch { throw new Error('پاسخ Gemini JSON معتبر نبود.'); }
+  const text = (payload.candidates || [])
+    .flatMap((candidate: any) => candidate?.content?.parts || [])
+    .map((part: any) => typeof part?.text === 'string' ? part.text : '')
+    .join('');
+  if (!text) throw new Error('Gemini پاسخ متنی قابل استفاده برنگرداند.');
+  return text;
 }
 
 export async function runBrowserConnectionDiagnostic(
@@ -56,20 +135,19 @@ export async function runBrowserConnectionDiagnostic(
   const startedAt = performance.now();
   const apiKey = await resolveGeminiApiKey(settings, signal);
   try {
-    const response = await fetch(GEMINI_GENERATE_ENDPOINT, {
-      method: 'POST',
-      cache: 'no-store',
-      headers: {
-        'Content-Type': 'application/json',
-        'x-goog-api-key': apiKey,
-      },
-      body: JSON.stringify({
-        contents: [{ role: 'user', parts: [{ text: 'hello' }] }],
-        generationConfig: { maxOutputTokens: 16, temperature: 0 },
-      }),
-      signal,
+    const { response, responseText } = await withGeminiTimeout(signal, async requestSignal => {
+      const response = await fetch(GEMINI_GENERATE_ENDPOINT, {
+        method: 'POST', cache: 'no-store',
+        headers: { 'Content-Type': 'application/json', 'x-goog-api-key': apiKey },
+        body: JSON.stringify({
+          contents: [{ role: 'user', parts: [{ text: 'hello' }] }],
+          generationConfig: { maxOutputTokens: 16, temperature: 0 },
+        }),
+        signal: requestSignal,
+      });
+      return { response, responseText: await response.text() };
     });
-    const raw = redactSecrets(await response.text(), apiKey);
+    const raw = redactSecrets(responseText, apiKey);
     return {
       route: 'browser-direct', endpoint: GEMINI_GENERATE_ENDPOINT,
       apiVersion: GEMINI_API_VERSION, model: GEMINI_MODEL,
@@ -107,28 +185,11 @@ interface TranscribeInput {
   audioBlob: Blob; sessionTitle: string; partTitle: string; fileName: string;
   chunkIndex: number; totalChunks: number; timeOffsetSeconds: number; customPrompt: string;
 }
-export async function transcribeChunk(ai: GoogleGenAI, input: TranscribeInput, signal: AbortSignal) {
+export async function transcribeChunk(ai: BrowserGeminiClient, input: TranscribeInput, signal: AbortSignal) {
   const { audioBlob, sessionTitle, partTitle, fileName, chunkIndex, totalChunks, timeOffsetSeconds, customPrompt } = input;
   const cleanMime = audioBlob.type.split(';')[0] || 'audio/mpeg';
-  let uploadedFileName: string | undefined;
-  try {
-    signal.throwIfAborted();
-    const uploadResult = await ai.files.upload({ file: audioBlob,
-      config: { mimeType: cleanMime, displayName: `${fileName}_part_${chunkIndex + 1}`, abortSignal: signal },
-    });
-    uploadedFileName = uploadResult.name;
-    if (!uploadedFileName) throw new Error('شناسه فایل آپلودشده دریافت نشد.');
-    let activeFile = uploadResult;
-    const deadline = Date.now() + 10 * 60 * 1000;
-    while (activeFile.state !== 'ACTIVE') {
-      signal.throwIfAborted();
-      if (activeFile.state === 'FAILED') throw new Error('پردازش فایل در گوگل ناموفق بود.');
-      if (Date.now() >= deadline) throw new Error('مهلت آماده‌سازی فایل صوتی تمام شد.');
-      await wait(2000, signal);
-      activeFile = await ai.files.get({ name: uploadedFileName, config: { abortSignal: signal } });
-    }
-    if (!activeFile.uri) throw new Error('آدرس فایل آماده دریافت نشد.');
-    uploadResult.uri = activeFile.uri;
+  signal.throwIfAborted();
+  const base64Audio = await blobToBase64(audioBlob, signal);
     const systemInstruction = `شما یک متخصص زبده پیاده‌سازی متون آموزشی دانشگاهی به زبان فارسی هستید.
 وظیفه شما استخراج سه بخش از این قطعه صوتی است:
 ۱. متن وفادار کلمه به کلمه با تفکیک گویندگان («استاد» یا «دانشجو») و زمان‌بندی دقیق هر پاراگراف.
@@ -139,65 +200,63 @@ export async function transcribeChunk(ai: GoogleGenAI, input: TranscribeInput, s
 
     const userPromptText = `جلسه: ${sessionTitle} | قسمت: ${partTitle} | فایل: ${fileName} | قطعه ${chunkIndex + 1} از ${totalChunks} | آفست: ${formatTime(timeOffsetSeconds)}\nدستورات: ${customPrompt || 'پیاده‌سازی دقیق و کامل'}`;
 
-    const response = await ai.models.generateContent({
-      model: GEMINI_MODEL,
-      contents: [
-        { fileData: { fileUri: uploadResult.uri, mimeType: cleanMime } },
+    const responseText = await generateContentText(ai, {
+      contents: [{ role: 'user', parts: [
+        { inlineData: { data: base64Audio, mimeType: cleanMime } },
         { text: userPromptText },
-      ],
-      config: {
-        abortSignal: signal,
+      ] }],
+      systemInstruction: { parts: [{ text: systemInstruction }] },
+      generationConfig: {
         maxOutputTokens: 65536,
-        systemInstruction,
         responseMimeType: 'application/json',
         responseSchema: {
-          type: Type.OBJECT,
+          type: SchemaType.OBJECT,
           properties: {
             paragraphs: {
-              type: Type.ARRAY,
+              type: SchemaType.ARRAY,
               items: {
-                type: Type.OBJECT,
+                type: SchemaType.OBJECT,
                 properties: {
-                  speaker: { type: Type.STRING },
-                  text: { type: Type.STRING },
-                  startSec: { type: Type.NUMBER },
-                  endSec: { type: Type.NUMBER },
-                  isUnclear: { type: Type.BOOLEAN },
+                  speaker: { type: SchemaType.STRING },
+                  text: { type: SchemaType.STRING },
+                  startSec: { type: SchemaType.NUMBER },
+                  endSec: { type: SchemaType.NUMBER },
+                  isUnclear: { type: SchemaType.BOOLEAN },
                 },
                 required: ['speaker', 'text', 'startSec', 'endSec'],
               },
             },
             questions: {
-              type: Type.ARRAY,
+              type: SchemaType.ARRAY,
               items: {
-                type: Type.OBJECT,
+                type: SchemaType.OBJECT,
                 properties: {
-                  type: { type: Type.STRING },
-                  topic: { type: Type.STRING },
-                  questionText: { type: Type.STRING },
-                  options: { type: Type.ARRAY, items: { type: Type.STRING } },
-                  answer: { type: Type.STRING },
-                  isAnswerStated: { type: Type.BOOLEAN },
-                  isComplete: { type: Type.BOOLEAN },
-                  asker: { type: Type.STRING },
-                  timeSec: { type: Type.NUMBER },
+                  type: { type: SchemaType.STRING },
+                  topic: { type: SchemaType.STRING },
+                  questionText: { type: SchemaType.STRING },
+                  options: { type: SchemaType.ARRAY, items: { type: SchemaType.STRING } },
+                  answer: { type: SchemaType.STRING },
+                  isAnswerStated: { type: SchemaType.BOOLEAN },
+                  isComplete: { type: SchemaType.BOOLEAN },
+                  asker: { type: SchemaType.STRING },
+                  timeSec: { type: SchemaType.NUMBER },
                 },
                 required: ['type', 'questionText', 'isAnswerStated'],
               },
             },
-            summaryPoints: { type: Type.ARRAY, items: { type: Type.STRING } },
+            summaryPoints: { type: SchemaType.ARRAY, items: { type: SchemaType.STRING } },
           },
           required: ['paragraphs', 'questions'],
         },
       },
-    });
+    }, signal);
 
-    const parsedData = JSON.parse(response.text || '{}');
+    const parsedData = JSON.parse(responseText || '{}');
     if (!Array.isArray(parsedData.paragraphs) || !parsedData.paragraphs.length || !Array.isArray(parsedData.questions)) throw new Error('پاسخ مدل فاقد متن معتبر است.');
     if (parsedData.paragraphs.some((p: any) => typeof p.text !== 'string' || !Number.isFinite(p.startSec) || !Number.isFinite(p.endSec) || p.startSec < 0 || p.endSec < p.startSec)) throw new Error('زمان‌بندی متن دریافتی معتبر نیست.');
     const offset = Number(timeOffsetSeconds) || 0;
 
-    return {
+  return {
       success: true,
       chunkIndex,
       paragraphs: (parsedData.paragraphs || []).map((p: any) => ({
@@ -219,68 +278,62 @@ export async function transcribeChunk(ai: GoogleGenAI, input: TranscribeInput, s
         formattedTime: formatTime((q.timeSec || 0) + offset),
       })),
       summaryPoints: parsedData.summaryPoints || [],
-    };
-  } finally {
-    if (uploadedFileName) await ai.files.delete({ name: uploadedFileName,
-      config: { httpOptions: { timeout: 15000 } } }).catch(() => {});
-  }
+  };
 }
 
 interface SynthesisInput {
   sessionTitle: string; courseTitle: string; instructorName: string;
   sessionNumber: string; date: string; allParagraphs: TranscriptParagraph[];
 }
-export async function synthesizeSession(ai: GoogleGenAI, input: SynthesisInput, signal: AbortSignal): Promise<ClassicNote> {
+export async function synthesizeSession(ai: BrowserGeminiClient, input: SynthesisInput, signal: AbortSignal): Promise<ClassicNote> {
   const { sessionTitle, courseTitle, instructorName, sessionNumber, date, allParagraphs } = input;
     const fullTranscriptText = allParagraphs.map((p: any) => `${p.speaker}: ${p.text}`).join('\n\n');
 
     const prompt = `بر اساس متن پیاده‌سازی شده کامل این جلسه، یک جزوه کلاسیک و دانشگاهی منظم به زبان فارسی بنویس.\nدرس: ${courseTitle} | استاد: ${instructorName} | جلسه: ${sessionNumber} - ${sessionTitle} | تاریخ: ${date}\nمتن:\n${fullTranscriptText}`;
 
-    const response = await ai.models.generateContent({
-      model: GEMINI_MODEL,
-      contents: prompt,
-      config: {
-        abortSignal: signal,
+    const responseText = await generateContentText(ai, {
+      contents: [{ role: 'user', parts: [{ text: prompt }] }],
+      generationConfig: {
         maxOutputTokens: 65536,
         responseMimeType: 'application/json',
         responseSchema: {
-          type: Type.OBJECT,
+          type: SchemaType.OBJECT,
           properties: {
-            title: { type: Type.STRING },
-            courseTitle: { type: Type.STRING },
-            instructor: { type: Type.STRING },
-            introduction: { type: Type.STRING },
+            title: { type: SchemaType.STRING },
+            courseTitle: { type: SchemaType.STRING },
+            instructor: { type: SchemaType.STRING },
+            introduction: { type: SchemaType.STRING },
             sections: {
-              type: Type.ARRAY,
+              type: SchemaType.ARRAY,
               items: {
-                type: Type.OBJECT,
+                type: SchemaType.OBJECT,
                 properties: {
-                  heading: { type: Type.STRING },
-                  subheading: { type: Type.STRING },
-                  content: { type: Type.STRING },
+                  heading: { type: SchemaType.STRING },
+                  subheading: { type: SchemaType.STRING },
+                  content: { type: SchemaType.STRING },
                   keyDefinitions: {
-                    type: Type.ARRAY,
+                    type: SchemaType.ARRAY,
                     items: {
-                      type: Type.OBJECT,
-                      properties: { term: { type: Type.STRING }, definition: { type: Type.STRING } },
+                      type: SchemaType.OBJECT,
+                      properties: { term: { type: SchemaType.STRING }, definition: { type: SchemaType.STRING } },
                       required: ['term', 'definition'],
                     },
                   },
-                  teacherEmphasisPoints: { type: Type.ARRAY, items: { type: Type.STRING } },
-                  examples: { type: Type.ARRAY, items: { type: Type.STRING } },
+                  teacherEmphasisPoints: { type: SchemaType.ARRAY, items: { type: SchemaType.STRING } },
+                  examples: { type: SchemaType.ARRAY, items: { type: SchemaType.STRING } },
                 },
                 required: ['heading', 'content'],
               },
             },
-            conclusion: { type: Type.STRING },
-            keyTermsList: { type: Type.ARRAY, items: { type: Type.STRING } },
+            conclusion: { type: SchemaType.STRING },
+            keyTermsList: { type: SchemaType.ARRAY, items: { type: SchemaType.STRING } },
           },
           required: ['title', 'sections', 'conclusion'],
         },
       },
-    });
+    }, signal);
 
-  const note = JSON.parse(response.text || '{}');
+  const note = JSON.parse(responseText || '{}');
   if (!Array.isArray(note.sections) || !note.sections.length || !note.title) throw new Error('جزوه معتبر از مدل دریافت نشد.');
   return note;
 }
