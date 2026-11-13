@@ -2,16 +2,18 @@ import { useEffect, useState } from 'react';
 import { set } from 'idb-keyval';
 import { loadUploadedFiles, loadSettings, saveSession } from '../utils/storage';
 import { prepareLongAudio } from '../utils/longAudio';
-import { createGeminiClient, transcribeChunk, synthesizeSession } from '../services/geminiClient';
+import { createGeminiClient, transcribeChunk, synthesizeSession, runBrowserConnectionDiagnostic, generateContentText } from '../services/geminiClient';
 
 export default function LongAudioVerification() {
   const [status, setStatus] = useState('شروع آزمون صوت واقعی…');
   useEffect(() => {
     const controller = new AbortController();
     let lastSaved = 0;
+    let lastPhase = '';
     const progress = (phase: string, details: Record<string, unknown> = {}) => {
       document.title = `SJ30:${phase}`;
-      if (Date.now() - lastSaved > 1000 || ['success', 'failed'].includes(phase)) {
+      if (lastPhase !== phase || Date.now() - lastSaved > 1000 || ['success', 'failed'].includes(phase)) {
+        lastPhase = phase;
         lastSaved = Date.now();
         void set('smart_jozveh_probe30_report_v1', JSON.stringify({ phase, time: new Date().toISOString(), ...details }));
       }
@@ -23,6 +25,38 @@ export default function LongAudioVerification() {
         if (!file?.file) throw new Error('فایل صوتی ذخیره‌شده‌ای در این مرورگر موجود نیست.');
         const settings = await loadSettings();
         const client = await createGeminiClient(settings, controller.signal);
+        if (new URLSearchParams(location.search).get('networkCheck') === '1') {
+          const results: Array<Record<string, unknown>> = [];
+          const check = async (name: string, request: () => Promise<unknown>) => {
+            progress(`network-${name}`, { results });
+            setStatus(`آزمون اتصال: ${name}`);
+            const start = Date.now();
+            try { const result = await request(); results.push({ name, durationMs: Date.now() - start, result }); }
+            catch (error: any) { results.push({ name, durationMs: Date.now() - start, error: error.message }); }
+          };
+          await check('unary', async () => {
+            const response = await runBrowserConnectionDiagnostic(settings, controller.signal);
+            return { ok: response.ok, status: response.status, raw: response.raw };
+          });
+          await check('stream', () => generateContentText(client, {
+            contents: [{ parts: [{ text: 'Reply with hello only.' }] }], generationConfig: { maxOutputTokens: 1024 },
+          }, controller.signal, 30_000));
+          const prepared = await prepareLongAudio(file.file, file.id, controller.signal, setStatus, true);
+          // Our encoder produces MPEG-2 Layer III, 16 kHz / 24 kbps, 108-byte frames.
+          // Cut at a complete frame boundary: 278 frames are 10.008 seconds.
+          const short = prepared[0].audioBlob!.slice(0, 108 * 278, 'audio/mpeg');
+          await check('audio10', async () => {
+            const data = await short.arrayBuffer();
+            let binary = ''; for (const b of new Uint8Array(data)) binary += String.fromCharCode(b);
+            return generateContentText(client, {
+              contents: [{ parts: [{ inlineData: { mimeType: 'audio/mpeg', data: btoa(binary) } }, { text: 'Write what you hear in this audio.' }] }],
+              generationConfig: { maxOutputTokens: 2048 },
+            }, controller.signal, 60_000);
+          });
+          progress('network-complete', { results });
+          setStatus(JSON.stringify(results, null, 2));
+          return;
+        }
         progress('preparing');
         const chunks = await prepareLongAudio(file.file, file.id, controller.signal, text => {
           setStatus(text); progress('encoding');

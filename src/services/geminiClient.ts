@@ -114,7 +114,7 @@ async function blobToBase64(blob: Blob, signal: AbortSignal): Promise<string> {
   });
 }
 
-async function generateContentText(
+export async function generateContentText(
   client: BrowserGeminiClient,
   body: Record<string, unknown>,
   parentSignal: AbortSignal,
