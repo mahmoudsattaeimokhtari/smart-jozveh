@@ -3,7 +3,7 @@ import type { AppSettings, TranscriptParagraph, ClassicNote } from '../types';
 
 export const GEMINI_API_BASE_URL = 'https://generativelanguage.googleapis.com';
 export const GEMINI_API_VERSION = 'v1beta';
-export const GEMINI_MODEL = 'gemini-2.5-flash';
+export const GEMINI_MODEL = 'gemini-3.8-flash';
 export const GEMINI_GENERATE_ENDPOINT = `${GEMINI_API_BASE_URL}/${GEMINI_API_VERSION}/models/${GEMINI_MODEL}:generateContent`;
 
 export interface ConnectionDiagnosticResult {
