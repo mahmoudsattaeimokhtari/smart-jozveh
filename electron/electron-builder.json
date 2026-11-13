@@ -1,0 +1,39 @@
+{
+  "appId": "ir.smartjozveh.app",
+  "productName": "جزوه‌نگار هوشمند",
+  "directories": {
+    "output": "dist-electron"
+  },
+  "files": [
+    "dist/**/*",
+    "electron/**/*"
+  ],
+  "extraMetadata": {
+    "main": "electron/main.cjs"
+  },
+  "win": {
+    "target": [
+      {
+        "target": "nsis",
+        "arch": ["x64", "ia32"]
+      },
+      {
+        "target": "portable",
+        "arch": ["x64", "ia32"]
+      }
+    ],
+    "icon": "public/icon-512.svg",
+    "requestedExecutionLevel": "asInvoker"
+  },
+  "nsis": {
+    "oneClick": false,
+    "allowToChangeInstallationDirectory": true,
+    "createDesktopShortcut": true,
+    "createStartMenuShortcut": true,
+    "shortcutName": "جزوه‌نگار هوشمند",
+    "language": "1065"
+  },
+  "portable": {
+    "artifactName": "SmartJozveh-Portable-${arch}.exe"
+  }
+}

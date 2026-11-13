@@ -1,0 +1,28 @@
+{
+  "name": "جزوه‌نگار هوشمند (Smart Jozveh)",
+  "short_name": "جزوه‌نگار",
+  "description": "سامانه هوشمند تبدیل صوت کلاس‌های درس به متن وفادار، بانک سؤالات و جزوه در قالب فایلهای Word و EPUB",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "background_color": "#0f172a",
+  "theme_color": "#1e293b",
+  "dir": "rtl",
+  "lang": "fa",
+  "orientation": "any",
+  "icons": [
+    {
+      "src": "./icon-192.svg",
+      "sizes": "192x192",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    },
+    {
+      "src": "./icon-512.svg",
+      "sizes": "512x512",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ],
+  "categories": ["education", "productivity", "utilities"]
+}

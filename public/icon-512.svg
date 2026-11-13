@@ -1,0 +1,24 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
+  <defs>
+    <linearGradient id="grad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#881337" />
+      <stop offset="50%" stop-color="#9A3412" />
+      <stop offset="100%" stop-color="#1E293B" />
+    </linearGradient>
+  </defs>
+  <rect width="512" height="512" rx="128" fill="url(#grad)" />
+  <!-- Academic Hat and Soundwave Icon -->
+  <g fill="#FFFFFF" transform="translate(106, 116)">
+    <!-- Graduation Cap -->
+    <path d="M150 20 L280 85 L150 150 L20 85 Z" opacity="0.95" />
+    <path d="M60 125 L60 200 C60 240, 240 240, 240 200 L240 125 L150 170 Z" opacity="0.85" />
+    <path d="M280 85 L280 180 A10 10 0 0 1 270 190 A10 10 0 0 1 260 180 L260 95 Z" fill="#FBBF24" />
+    <!-- Audio Wave Lines below -->
+    <rect x="70" y="240" width="16" height="35" rx="8" fill="#F8FAFC" />
+    <rect x="100" y="225" width="16" height="65" rx="8" fill="#F8FAFC" />
+    <rect x="130" y="210" width="16" height="95" rx="8" fill="#FDE68A" />
+    <rect x="160" y="218" width="16" height="80" rx="8" fill="#F8FAFC" />
+    <rect x="190" y="235" width="16" height="45" rx="8" fill="#F8FAFC" />
+    <rect x="220" y="245" width="16" height="25" rx="8" fill="#F8FAFC" />
+  </g>
+</svg>

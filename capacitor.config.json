@@ -1,0 +1,16 @@
+{
+  "appId": "ir.smartjozveh.app",
+  "appName": "جزوه‌نگار هوشمند",
+  "webDir": "dist",
+  "bundledWebRuntime": false,
+  "server": {
+    "androidScheme": "https",
+    "cleartext": false
+  },
+  "android": {
+    "backgroundColor": "#0f172a",
+    "allowMixedContent": false,
+    "captureInput": true,
+    "webContentsDebuggingEnabled": false
+  }
+}
