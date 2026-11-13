@@ -365,7 +365,7 @@ export const InstallModal: React.FC<InstallModalProps> = ({
                   <div className="p-3 flex items-start gap-3 bg-white">
                     <Wifi className="w-4 h-4 text-blue-600 shrink-0 mt-0.5" />
                     <div>
-                      <strong className="text-slate-800">نیازمند اینترنت (Gemini 3.8 Flash):</strong>
+                      <strong className="text-slate-800">نیازمند اینترنت (Gemini 3.5 Flash-Lite):</strong>
                       <p className="text-slate-500 mt-0.5">
                         رونویسی صوتی به متن و ساخت پرسش‌ها و جزوه موضوعی. در صورت قطع ارتباط اینترنت در حین کار، وضعیت قطعات پیشین حفظ شده و با اتصال مجدد، از همان قطعه ناتمام به‌صورت خودکار ادامه می‌یابد.
                       </p>
