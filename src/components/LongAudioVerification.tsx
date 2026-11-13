@@ -53,6 +53,22 @@ export default function LongAudioVerification() {
               generationConfig: { maxOutputTokens: 2048 },
             }, controller.signal, 60_000);
           });
+          if (new URLSearchParams(location.search).get('checkLongInput') === '1') {
+            await check('audio30-short-output', async () => {
+              const blob = prepared[0].audioBlob!;
+              const data = await new Promise<string>((resolve, reject) => {
+                const reader = new FileReader();
+                reader.onload = () => resolve(String(reader.result).split(',')[1]);
+                reader.onerror = () => reject(reader.error);
+                reader.readAsDataURL(blob);
+              });
+              return generateContentText(client, {
+                contents: [{ parts: [{ inlineData: { mimeType: 'audio/mpeg', data } },
+                  { text: 'این فایل صوتی را گوش بده و فقط در یک جمله فارسی موضوع آن را بگو.' }] }],
+                generationConfig: { maxOutputTokens: 1024 },
+              }, controller.signal, 240_000);
+            });
+          }
           progress('network-complete', { results });
           setStatus(JSON.stringify(results, null, 2));
           return;
