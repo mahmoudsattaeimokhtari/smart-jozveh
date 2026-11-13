@@ -5,7 +5,9 @@ export const GEMINI_API_BASE_URL = 'https://generativelanguage.googleapis.com';
 export const GEMINI_API_VERSION = 'v1beta';
 export const GEMINI_MODEL = 'gemini-3.5-flash-lite';
 export const GEMINI_GENERATE_ENDPOINT = `${GEMINI_API_BASE_URL}/${GEMINI_API_VERSION}/models/${GEMINI_MODEL}:generateContent`;
-export const GEMINI_REQUEST_TIMEOUT_MS = 180_000;
+export const GEMINI_AUDIO_TIMEOUT_MS = 120_000;
+export const GEMINI_TEXT_TIMEOUT_MS = 180_000;
+export const GEMINI_DIAGNOSTIC_TIMEOUT_MS = 30_000;
 
 const SchemaType = {
   OBJECT: 'OBJECT', ARRAY: 'ARRAY', STRING: 'STRING', NUMBER: 'NUMBER', BOOLEAN: 'BOOLEAN',
@@ -56,20 +58,25 @@ export async function createGeminiClient(settings: AppSettings, signal?: AbortSi
 async function withGeminiTimeout<T>(
   parentSignal: AbortSignal | undefined,
   request: (signal: AbortSignal) => Promise<T>,
+  timeoutMs: number,
 ): Promise<T> {
   parentSignal?.throwIfAborted();
   const controller = new AbortController();
   let timedOut = false;
   const forwardAbort = () => controller.abort(parentSignal?.reason);
   parentSignal?.addEventListener('abort', forwardAbort, { once: true });
+  let rejectTimeout: ((reason?: unknown) => void) | undefined;
+  const timeoutPromise = new Promise<never>((_, reject) => { rejectTimeout = reject; });
   const timer = window.setTimeout(() => {
     timedOut = true;
-    controller.abort(new DOMException('Gemini request timed out', 'TimeoutError'));
-  }, GEMINI_REQUEST_TIMEOUT_MS);
+    const timeoutError = new Error(`مهلت ${Math.round(timeoutMs / 1000)} ثانیه‌ای درخواست Gemini تمام شد؛ اتصال را بررسی و دوباره تلاش کنید.`);
+    controller.abort(timeoutError);
+    rejectTimeout?.(timeoutError);
+  }, timeoutMs);
   try {
-    return await request(controller.signal);
+    return await Promise.race([request(controller.signal), timeoutPromise]);
   } catch (error) {
-    if (timedOut) throw new Error('مهلت ۱۸۰ ثانیه‌ای درخواست Gemini تمام شد؛ اتصال را بررسی و دوباره تلاش کنید.');
+    if (timedOut) throw new Error(`مهلت ${Math.round(timeoutMs / 1000)} ثانیه‌ای درخواست Gemini تمام شد؛ اتصال را بررسی و دوباره تلاش کنید.`);
     throw error;
   } finally {
     window.clearTimeout(timer);
@@ -80,7 +87,7 @@ async function withGeminiTimeout<T>(
 async function blobToBase64(blob: Blob, signal: AbortSignal): Promise<string> {
   signal.throwIfAborted();
   if (blob.size > MAX_INLINE_AUDIO_BYTES) {
-    throw new Error(`حجم قطعه صوتی ${Math.ceil(blob.size / 1024 / 1024)} مگابایت است و از سقف ۸ مگابایت ارسال مستقیم بیشتر است.`);
+    throw new Error(`حجم قطعه صوتی ${Math.ceil(blob.size / 1024 / 1024)} مگابایت است و از سقف ۳ مگابایت ارسال مستقیم بیشتر است.`);
   }
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
@@ -103,6 +110,7 @@ async function generateContentText(
   client: BrowserGeminiClient,
   body: Record<string, unknown>,
   parentSignal: AbortSignal,
+  timeoutMs = GEMINI_TEXT_TIMEOUT_MS,
 ): Promise<string> {
   const { response, raw } = await withGeminiTimeout(parentSignal, async requestSignal => {
     const response = await fetch(GEMINI_GENERATE_ENDPOINT, {
@@ -113,7 +121,7 @@ async function generateContentText(
       signal: requestSignal,
     });
     return { response, raw: await response.text() };
-  });
+  }, timeoutMs);
   if (!response.ok) {
     throw new Error(`HTTP ${response.status}: ${redactSecrets(raw, client.apiKey)}`);
   }
@@ -146,7 +154,7 @@ export async function runBrowserConnectionDiagnostic(
         signal: requestSignal,
       });
       return { response, responseText: await response.text() };
-    });
+    }, GEMINI_DIAGNOSTIC_TIMEOUT_MS);
     const raw = redactSecrets(responseText, apiKey);
     return {
       route: 'browser-direct', endpoint: GEMINI_GENERATE_ENDPOINT,
@@ -249,7 +257,7 @@ export async function transcribeChunk(ai: BrowserGeminiClient, input: Transcribe
           required: ['paragraphs', 'questions'],
         },
       },
-    }, signal);
+    }, signal, GEMINI_AUDIO_TIMEOUT_MS);
 
     const parsedData = JSON.parse(responseText || '{}');
     if (!Array.isArray(parsedData.paragraphs) || !parsedData.paragraphs.length || !Array.isArray(parsedData.questions)) throw new Error('پاسخ مدل فاقد متن معتبر است.');

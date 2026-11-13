@@ -1,7 +1,7 @@
 import { AudioChunk } from '../types';
 
-export const DEFAULT_CHUNK_MINUTES = 8;
-export const MAX_INLINE_AUDIO_BYTES = 8 * 1024 * 1024;
+export const DEFAULT_CHUNK_MINUTES = 2;
+export const MAX_INLINE_AUDIO_BYTES = 3 * 1024 * 1024;
 
 export async function getAudioDuration(file: File): Promise<number> {
   return new Promise(resolve => {
@@ -54,7 +54,7 @@ export async function sliceAudioFile(file: File, parentFileId: string, maxMinute
   const context = new AudioContext({ sampleRate: 16000 });
   try {
     const buffer = await context.decodeAudioData(await file.arrayBuffer());
-    // Inline Base64 adds about 33% overhead. Keep the raw mono WAV at or below 8 MiB.
+    // Inline Base64 adds about 33% overhead. Keep the raw mono WAV at or below 3 MiB.
     const framesByTime = Math.max(1, Math.floor(maxMinutes * 60 * buffer.sampleRate));
     const framesBySize = Math.max(1, Math.floor((MAX_INLINE_AUDIO_BYTES - 44) / 2));
     const framesPerChunk = Math.min(framesByTime, framesBySize);

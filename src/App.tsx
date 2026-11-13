@@ -280,7 +280,7 @@ export default function App() {
           let success = false;
           let attempts = 0;
 
-          while (!success && attempts < 3 && !signal.aborted) {
+          while (!success && attempts < 2 && !signal.aborted) {
             attempts++;
             try {
               const data = await transcribeChunk(ai, {
@@ -297,13 +297,13 @@ export default function App() {
             } catch (err: any) {
               if (signal.aborted) return;
               console.warn(`Chunk ${chunk.chunkId} attempt ${attempts} failed:`, err);
-              if (attempts >= 3) {
+              if (attempts >= 2) {
                 setProcessingErrors((prev) => [
                   ...prev,
                   `قطعه ${chunk.chunkIndex + 1} از فایل ${file.name} پردازش نشد: ${err.message}`,
                 ]);
               } else {
-                // Exponential backoff (3s, then 6s) for rate limit / network stability
+                // One short retry for transient VPN/rate-limit failures.
                 await wait(attempts * 3000, signal);
               }
             }
