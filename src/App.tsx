@@ -280,7 +280,7 @@ export default function App() {
           let success = false;
           let attempts = 0;
 
-          while (!success && attempts < 2 && !signal.aborted) {
+          while (!success && attempts < 3 && !signal.aborted) {
             attempts++;
             try {
               const data = await transcribeChunk(ai, {
@@ -297,14 +297,16 @@ export default function App() {
             } catch (err: any) {
               if (signal.aborted) return;
               console.warn(`Chunk ${chunk.chunkId} attempt ${attempts} failed:`, err);
-              if (attempts >= 2) {
+              const retryable = /NetworkError|fetch|مهلت|timeout|HTTP (?:429|5\d\d)/i.test(err?.message || String(err));
+              if (attempts >= 3 || !retryable) {
                 setProcessingErrors((prev) => [
                   ...prev,
                   `قطعه ${chunk.chunkIndex + 1} از فایل ${file.name} پردازش نشد: ${err.message}`,
                 ]);
+                break;
               } else {
-                // One short retry for transient VPN/rate-limit failures.
-                await wait(attempts * 3000, signal);
+                // Give the Firefox VPN tunnel time to release an aborted request.
+                await wait(attempts === 1 ? 15000 : 30000, signal);
               }
             }
           }

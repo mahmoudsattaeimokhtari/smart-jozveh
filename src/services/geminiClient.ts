@@ -215,7 +215,7 @@ export async function transcribeChunk(ai: BrowserGeminiClient, input: Transcribe
       ] }],
       systemInstruction: { parts: [{ text: systemInstruction }] },
       generationConfig: {
-        maxOutputTokens: 65536,
+        maxOutputTokens: 8192,
         responseMimeType: 'application/json',
         responseSchema: {
           type: SchemaType.OBJECT,
@@ -302,7 +302,7 @@ export async function synthesizeSession(ai: BrowserGeminiClient, input: Synthesi
     const responseText = await generateContentText(ai, {
       contents: [{ role: 'user', parts: [{ text: prompt }] }],
       generationConfig: {
-        maxOutputTokens: 65536,
+        maxOutputTokens: 16384,
         responseMimeType: 'application/json',
         responseSchema: {
           type: SchemaType.OBJECT,
