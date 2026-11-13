@@ -1,5 +1,6 @@
 import type { AppSettings, TranscriptParagraph, ClassicNote } from '../types';
-import { MAX_INLINE_AUDIO_BYTES } from '../utils/audioChunker';
+import { MAX_INLINE_AUDIO_BYTES, sliceAudioFile } from '../utils/audioChunker';
+import { get, set } from 'idb-keyval';
 
 export const GEMINI_API_BASE_URL = 'https://generativelanguage.googleapis.com';
 export const GEMINI_API_VERSION = 'v1beta';
@@ -63,7 +64,12 @@ async function withGeminiTimeout<T>(
   parentSignal?.throwIfAborted();
   const controller = new AbortController();
   let timedOut = false;
-  const forwardAbort = () => controller.abort(parentSignal?.reason);
+  let rejectCancelled: ((reason?: unknown) => void) | undefined;
+  const cancelled = new Promise<never>((_, reject) => { rejectCancelled = reject; });
+  const forwardAbort = () => {
+    controller.abort(parentSignal?.reason);
+    rejectCancelled?.(parentSignal?.reason || new DOMException('Aborted', 'AbortError'));
+  };
   parentSignal?.addEventListener('abort', forwardAbort, { once: true });
   let rejectTimeout: ((reason?: unknown) => void) | undefined;
   const timeoutPromise = new Promise<never>((_, reject) => { rejectTimeout = reject; });
@@ -74,7 +80,7 @@ async function withGeminiTimeout<T>(
     rejectTimeout?.(timeoutError);
   }, timeoutMs);
   try {
-    return await Promise.race([request(controller.signal), timeoutPromise]);
+    return await Promise.race([request(controller.signal), timeoutPromise, cancelled]);
   } catch (error) {
     if (timedOut) throw new Error(`مهلت ${Math.round(timeoutMs / 1000)} ثانیه‌ای درخواست Gemini تمام شد؛ اتصال را بررسی و دوباره تلاش کنید.`);
     throw error;
@@ -128,8 +134,12 @@ async function generateContentText(
   let payload: any;
   try { payload = JSON.parse(raw); }
   catch { throw new Error('پاسخ Gemini JSON معتبر نبود.'); }
-  const text = (payload.candidates || [])
-    .flatMap((candidate: any) => candidate?.content?.parts || [])
+  const candidate = payload.candidates?.[0];
+  if (candidate?.finishReason && candidate.finishReason !== 'STOP') {
+    throw new Error(`پاسخ Gemini کامل نشد: ${candidate.finishReason}`);
+  }
+  const text = (candidate?.content?.parts || [])
+    .filter((part: any) => !part.thought)
     .map((part: any) => typeof part?.text === 'string' ? part.text : '')
     .join('');
   if (!text) throw new Error('Gemini پاسخ متنی قابل استفاده برنگرداند.');
@@ -192,8 +202,10 @@ export function wait(ms: number, signal?: AbortSignal): Promise<void> {
 interface TranscribeInput {
   audioBlob: Blob; sessionTitle: string; partTitle: string; fileName: string;
   chunkIndex: number; totalChunks: number; timeOffsetSeconds: number; customPrompt: string;
+  progressKey?: string;
+  onStatus?: (message: string) => void;
 }
-export async function transcribeChunk(ai: BrowserGeminiClient, input: TranscribeInput, signal: AbortSignal) {
+async function transcribeSingle(ai: BrowserGeminiClient, input: TranscribeInput, signal: AbortSignal) {
   const { audioBlob, sessionTitle, partTitle, fileName, chunkIndex, totalChunks, timeOffsetSeconds, customPrompt } = input;
   const cleanMime = audioBlob.type.split(';')[0] || 'audio/mpeg';
   signal.throwIfAborted();
@@ -286,6 +298,50 @@ export async function transcribeChunk(ai: BrowserGeminiClient, input: Transcribe
         formattedTime: formatTime((q.timeSec || 0) + offset),
       })),
       summaryPoints: parsedData.summaryPoints || [],
+  };
+}
+
+type ChunkResult = Awaited<ReturnType<typeof transcribeSingle>>;
+interface SmallPartRecovery {
+  parts: Array<{ blob: Blob; offset: number }>;
+  results: ChunkResult[];
+}
+
+export async function transcribeChunk(ai: BrowserGeminiClient, input: TranscribeInput, signal: AbortSignal): Promise<ChunkResult> {
+  const key = input.progressKey ? `smart_jozveh_small_parts_v1:${input.progressKey}` : undefined;
+  let recovery = key ? await get<SmallPartRecovery>(key) : undefined;
+  if (!recovery) {
+    input.onStatus?.('در حال ارسال قطعه صوتی؛ سقف انتظار هر درخواست ۱۲۰ ثانیه است.');
+    try { return await transcribeSingle(ai, input, signal); }
+    catch (error: any) {
+      signal.throwIfAborted();
+      if (!/NetworkError|fetch|مهلت|timeout|MAX_TOKENS/i.test(error?.message || '')) throw error;
+      input.onStatus?.('ارسال قطعه کامل نشد؛ در حال تقسیم همان قطعه به بخش‌های ۳۰ ثانیه‌ای…');
+      // Re-decode compressed containers; never cut MP3/MP4 by arbitrary byte offsets.
+      const parts = await sliceAudioFile(new File([input.audioBlob], 'retry-audio', {
+        type: input.audioBlob.type,
+      }), 'retry', 0.5);
+      if (parts.length < 2) throw error;
+      recovery = { parts: parts.map(part => ({ blob: part.audioBlob!, offset: part.timeOffsetSeconds })), results: [] };
+      if (key) await set(key, recovery);
+    }
+  }
+  for (let i = recovery.results.length; i < recovery.parts.length; i++) {
+    signal.throwIfAborted();
+    input.onStatus?.(`ارسال بخش کوچک ${i + 1} از ${recovery.parts.length}؛ ${recovery.results.length} بخش ذخیره شده است.`);
+    const part = recovery.parts[i];
+    const result = await transcribeSingle(ai, {
+      ...input, audioBlob: part.blob,
+      timeOffsetSeconds: input.timeOffsetSeconds + part.offset,
+    }, signal);
+    recovery.results.push(result);
+    if (key) await set(key, recovery);
+  }
+  return {
+    success: true, chunkIndex: input.chunkIndex,
+    paragraphs: recovery.results.flatMap(result => result.paragraphs),
+    questions: recovery.results.flatMap(result => result.questions),
+    summaryPoints: recovery.results.flatMap(result => result.summaryPoints),
   };
 }
 

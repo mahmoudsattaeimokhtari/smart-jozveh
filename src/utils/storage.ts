@@ -109,6 +109,10 @@ export async function saveQueueState(state: QueueStateSnapshot | null): Promise<
   if (!state) {
     await del(QUEUE_KEY);
   } else {
+    const previous = await get<QueueStateSnapshot>(QUEUE_KEY);
+    if (previous?.jobId && previous.jobId !== state.jobId) {
+      await set(`${QUEUE_KEY}:archive:${previous.jobId}`, previous);
+    }
     await set(QUEUE_KEY, state);
   }
 }

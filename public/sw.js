@@ -1,4 +1,4 @@
-const CACHE_NAME = 'smart-jozveh-v7';
+const CACHE_NAME = 'smart-jozveh-v8';
 self.addEventListener('install', event => event.waitUntil(self.skipWaiting()));
 self.addEventListener('activate', event => event.waitUntil((async () => {
   for (const name of await caches.keys()) {

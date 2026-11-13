@@ -75,6 +75,7 @@ export default function App() {
   const [currentPartName, setCurrentPartName] = useState<string>('');
   const [currentSessionTitle, setCurrentSessionTitle] = useState<string>('');
   const [processingErrors, setProcessingErrors] = useState<string[]>([]);
+  const [requestStatus, setRequestStatus] = useState('');
 
   // Modals
   const [isMenuOpen, setIsMenuOpen] = useState(false);
@@ -285,6 +286,8 @@ export default function App() {
             try {
               const data = await transcribeChunk(ai, {
                 audioBlob: chunk.audioBlob,
+                progressKey: `${jobId}:${chunk.chunkId}`,
+                onStatus: setRequestStatus,
                 sessionTitle, partTitle: file.partName, fileName: file.name,
                 chunkIndex: chunk.chunkIndex, totalChunks: chunk.totalChunks,
                 timeOffsetSeconds: chunk.timeOffsetSeconds, customPrompt,
@@ -306,6 +309,7 @@ export default function App() {
                 break;
               } else {
                 // Give the Firefox VPN tunnel time to release an aborted request.
+                setRequestStatus(`تلاش ${attempts} ناموفق بود؛ تلاش بعدی پس از ${attempts === 1 ? 15 : 30} ثانیه. بخش‌های موفق ذخیره‌اند.`);
                 await wait(attempts === 1 ? 15000 : 30000, signal);
               }
             }
@@ -334,6 +338,7 @@ export default function App() {
 
         // Step 4: Synthesizing Session into Classic Study Notes
         setProcessingStep('generating_notes');
+        setRequestStatus('متن قطعات ذخیره شده است؛ در حال دریافت جزوه از Gemini با سقف انتظار ۱۸۰ ثانیه.');
         setProgressPercent(84);
 
         const classicNote = await synthesizeSession(ai, {
@@ -519,6 +524,7 @@ export default function App() {
             percent={progressPercent}
             isOnline={isOnline}
             errors={processingErrors}
+            requestStatus={requestStatus}
             onRetryFailed={handleStartProcessing}
             onCancel={handleCancelProcessing}
           />

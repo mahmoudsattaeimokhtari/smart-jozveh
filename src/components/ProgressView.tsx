@@ -30,6 +30,7 @@ interface ProgressViewProps {
   percent: number;
   isOnline: boolean;
   errors: string[];
+  requestStatus?: string;
   onRetryFailed?: () => void;
   onCancel?: () => void;
 }
@@ -44,6 +45,7 @@ export const ProgressView: React.FC<ProgressViewProps> = ({
   percent,
   isOnline,
   errors,
+  requestStatus,
   onRetryFailed,
   onCancel,
 }) => {
@@ -122,6 +124,7 @@ export const ProgressView: React.FC<ProgressViewProps> = ({
         </div>
 
         {/* Current target info tag */}
+        {requestStatus && <p role="status" className="mt-3 text-xs leading-6 text-slate-700">{requestStatus}</p>}
         {currentFileName && (
           <div className="mt-3 inline-block px-3 py-1 bg-slate-50 border border-slate-200 rounded-md text-xs text-slate-600">
             {currentPartName} · {currentFileName}
